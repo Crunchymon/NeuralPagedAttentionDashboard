@@ -431,6 +431,8 @@ function App() {
           <option value={2}>2x Speed</option>
           <option value={3}>3x Speed</option>
           <option value={5}>5x Speed</option>
+          <option value={10}>10x Speed</option>
+          <option value={20}>20x Speed</option>
         </select>
 
         <span style={{ marginLeft: '12px', fontSize: '0.85rem', color: 'var(--text-secondary)', display: 'flex', alignItems: 'center', gap: '8px' }}>
