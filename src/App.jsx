@@ -17,6 +17,7 @@ function App() {
   const [gpuBlocks, setGpuBlocks] = useState('');
   const [cpuBlocks, setCpuBlocks] = useState('');
   const [tokensPerBlock, setTokensPerBlock] = useState('');
+  const [maxQueueSize, setMaxQueueSize] = useState('');
   const [maxTicksEasy, setMaxTicksEasy] = useState('');
   const [maxTicksMedium, setMaxTicksMedium] = useState('');
   const [maxTicksHard, setMaxTicksHard] = useState('');
@@ -84,6 +85,7 @@ function App() {
         gpu_total_blocks: gpuBlocks ? parseInt(gpuBlocks, 10) : null,
         cpu_total_blocks: cpuBlocks ? parseInt(cpuBlocks, 10) : null,
         tokens_per_block: tokensPerBlock ? parseInt(tokensPerBlock, 10) : null,
+        max_queue_size: maxQueueSize ? parseInt(maxQueueSize, 10) : null,
         max_ticks_easy: maxTicksEasy ? parseInt(maxTicksEasy, 10) : null,
         max_ticks_medium: maxTicksMedium ? parseInt(maxTicksMedium, 10) : null,
         max_ticks_hard: maxTicksHard ? parseInt(maxTicksHard, 10) : null,
@@ -105,6 +107,7 @@ function App() {
         gpu: settingsPayload.gpu_total_blocks || defaultSettings?.GPU_TOTAL_BLOCKS || 'Default',
         cpu: settingsPayload.cpu_total_blocks || defaultSettings?.CPU_TOTAL_BLOCKS || 'Default',
         tokens: settingsPayload.tokens_per_block || defaultSettings?.TOKENS_PER_BLOCK || 'Default',
+        queue: settingsPayload.max_queue_size || defaultSettings?.max_queue_size || 'Default',
       });
 
       const simPayload = {
@@ -236,6 +239,36 @@ function App() {
     URL.revokeObjectURL(url);
   };
 
+  const downloadSession = (format = 'json') => {
+    if (!sessionData) return;
+    
+    let content = '';
+    let mimeType = '';
+    let filename = '';
+
+    if (format === 'json') {
+      content = JSON.stringify(sessionData, null, 2);
+      mimeType = 'application/json';
+      filename = `session_${sessionData.session_id || selectedAgent}_summary.json`;
+    } else if (format === 'csv') {
+      const headers = Object.keys(sessionData).join(',');
+      const rows = Object.values(sessionData).join(',');
+      content = `${headers}\n${rows}`;
+      mimeType = 'text/csv';
+      filename = `session_${sessionData.session_id || selectedAgent}_summary.csv`;
+    }
+
+    const blob = new Blob([content], { type: mimeType });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = filename;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+  };
+
   // Custom Tooltip for charts
   const CustomTooltip = ({ active, payload, label }) => {
     if (active && payload && payload.length) {
@@ -280,6 +313,10 @@ function App() {
                 <div className="form-group">
                   <label>Tokens Per Block</label>
                   <input type="number" className="form-control" placeholder={defaultSettings?.TOKENS_PER_BLOCK || "Default"} value={tokensPerBlock} onChange={e => setTokensPerBlock(e.target.value)} />
+                </div>
+                <div className="form-group">
+                  <label>Max Queue Size</label>
+                  <input type="number" className="form-control" placeholder={defaultSettings?.max_queue_size || "Default"} value={maxQueueSize} onChange={e => setMaxQueueSize(e.target.value)} />
                 </div>
               </div>
             </div>
@@ -425,6 +462,7 @@ function App() {
           <div style={{ color: 'var(--text-secondary)' }}><strong>GPU Blocks:</strong> <span style={{ color: '#fff' }}>{currentConfig.gpu}</span></div>
           <div style={{ color: 'var(--text-secondary)' }}><strong>CPU Blocks:</strong> <span style={{ color: '#fff' }}>{currentConfig.cpu}</span></div>
           <div style={{ color: 'var(--text-secondary)' }}><strong>Tokens/Block:</strong> <span style={{ color: '#fff' }}>{currentConfig.tokens}</span></div>
+          <div style={{ color: 'var(--text-secondary)' }}><strong>Queue Size:</strong> <span style={{ color: '#fff' }}>{currentConfig.queue}</span></div>
         </div>
       )}
 
@@ -553,26 +591,41 @@ function App() {
           </div>
         </div>
 
-        {/* Crash Status */}
+        {/* Session Summary & Crash Status */}
         {sessionData && (
           <div style={{ 
             marginTop: '20px', 
             padding: '12px', 
             borderRadius: '8px', 
-            background: sessionData.crashed ? 'rgba(239, 68, 68, 0.1)' : 'rgba(16, 185, 129, 0.1)',
-            border: `1px solid ${sessionData.crashed ? 'rgba(239, 68, 68, 0.3)' : 'rgba(16, 185, 129, 0.3)'}`,
+            background: 'rgba(255,255,255,0.05)',
+            border: `1px solid ${sessionData.crashed ? 'rgba(239, 68, 68, 0.4)' : 'rgba(255,255,255,0.1)'}`,
             display: 'flex',
-            alignItems: 'center',
-            gap: '10px'
+            flexDirection: 'column',
+            gap: '8px'
           }}>
-            <AlertTriangle size={18} color={sessionData.crashed ? '#ef4444' : '#10b981'} />
-            <div>
-              <div style={{ fontSize: '0.8rem', color: sessionData.crashed ? '#ef4444' : '#10b981', fontWeight: 'bold' }}>
-                {sessionData.crashed ? 'EPISODE CRASHED' : 'EPISODE COMPLETED'}
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', paddingBottom: '8px', borderBottom: '1px solid rgba(255,255,255,0.1)' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+                <AlertTriangle size={18} color={sessionData.crashed ? '#ef4444' : '#10b981'} />
+                <div>
+                  <div style={{ fontSize: '0.8rem', color: sessionData.crashed ? '#ef4444' : '#10b981', fontWeight: 'bold' }}>
+                    {sessionData.crashed ? 'EPISODE CRASHED' : 'EPISODE COMPLETED'}
+                  </div>
+                  <div style={{ fontSize: '0.7rem', color: 'var(--text-secondary)' }}>
+                    {sessionData.crashed ? `Agent failed at tick ${sessionData.ticks_run}` : `Successfully reached tick ${sessionData.ticks_run}`}
+                  </div>
+                </div>
               </div>
-              <div style={{ fontSize: '0.7rem', color: 'var(--text-secondary)' }}>
-                {sessionData.crashed ? `Agent failed at tick ${sessionData.ticks_run}` : `Successfully reached tick ${sessionData.ticks_run}`}
+              <div style={{ display: 'flex', gap: '4px' }}>
+                <button className="btn" style={{ padding: '2px 6px', fontSize: '0.65rem' }} onClick={() => downloadSession('json')}>JSON</button>
+                <button className="btn" style={{ padding: '2px 6px', fontSize: '0.65rem' }} onClick={() => downloadSession('csv')}>CSV</button>
               </div>
+            </div>
+            
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '8px', fontSize: '0.8rem', color: 'var(--text-secondary)', marginTop: '4px' }}>
+               <div><strong>Arrived:</strong> <span style={{color: '#fff'}}>{sessionData.total_arrived || 0}</span></div>
+               <div><strong>Completed:</strong> <span style={{color: '#fff'}}>{sessionData.total_completed || 0}</span></div>
+               <div><strong>Total Reward:</strong> <span style={{color: '#fff'}}>{(sessionData.total_reward || 0).toFixed(2)}</span></div>
+               <div><strong>Final Score:</strong> <span style={{color: '#fff'}}>{(sessionData.final_score || 0).toFixed(3)}</span></div>
             </div>
           </div>
         )}
@@ -642,10 +695,34 @@ function App() {
               <div key={`${log.tick || index}-${index}`} className={`log-item ${index === 0 ? 'highlight' : ''}`}>
                 <span className="log-tick">[{log.tick || 0}]</span>
                 <span className="log-action">ACTION: {log.action || 'Unknown'}</span>
-                <span className="log-reward">{log.reward > 0 ? '+' : ''}{(log.reward || 0).toFixed(2)}</span>
+                <span className="log-reward" style={log.reward < 0 ? { color: 'var(--danger-color)' } : {}}>
+                  {log.reward > 0 ? '+' : ''}{(log.reward || 0).toFixed(2)}
+                </span>
               </div>
             ))
           )}
+        </div>
+      </div>
+
+      {/* Bottom Token Chart */}
+      <div className="panel grid-col-12">
+        <div className="panel-header">
+          <div className="panel-title">
+            <div className="icon-wrapper green"><Activity size={16} /></div>
+            TOKEN PROCESSING PER TICK
+          </div>
+        </div>
+        <div style={{ width: '100%', height: '280px' }}>
+          <ResponsiveContainer>
+            <LineChart data={history} margin={{ top: 5, right: 20, bottom: 5, left: 0 }}>
+              <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.05)" vertical={false} />
+              <XAxis dataKey="tick" stroke="#9ca3af" fontSize={12} tickLine={false} axisLine={false} />
+              <YAxis stroke="#9ca3af" fontSize={12} tickLine={false} axisLine={false} />
+              <Tooltip content={<CustomTooltip />} />
+              <Line type="monotone" dataKey="tick_prompt_tokens" name="Prompt Tokens" stroke="#10b981" strokeWidth={2} dot={false} isAnimationActive={false} />
+              <Line type="monotone" dataKey="tick_gen_tokens" name="Generated Tokens" stroke="#3b82f6" strokeWidth={2} dot={false} isAnimationActive={false} />
+            </LineChart>
+          </ResponsiveContainer>
         </div>
       </div>
 
