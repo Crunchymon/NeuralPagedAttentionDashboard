@@ -11,7 +11,7 @@ function App() {
 
   // Config Form State
   const [selectedAgent, setSelectedAgent] = useState('lru');
-  const [selectedTask, setSelectedTask] = useState('hard');
+  const [selectedTask, setSelectedTask] = useState('all');
   const [customTicks, setCustomTicks] = useState('');
   
   const [gpuBlocks, setGpuBlocks] = useState('');
@@ -112,7 +112,7 @@ function App() {
 
       const simPayload = {
         agent: selectedAgent,
-        task: selectedTask,
+        task: selectedTask === 'all' ? null : selectedTask,
         ticks: customTicks ? parseInt(customTicks, 10) : null
       };
 
@@ -355,6 +355,7 @@ function App() {
                 <div className="form-group">
                   <label>Task Difficulty</label>
                   <select className="form-control" value={selectedTask} onChange={(e) => setSelectedTask(e.target.value)} required>
+                    <option value="all">All Levels</option>
                     <option value="easy">Easy</option>
                     <option value="medium">Medium</option>
                     <option value="hard">Hard</option>
@@ -433,6 +434,9 @@ function App() {
           <option value={5}>5x Speed</option>
           <option value={10}>10x Speed</option>
           <option value={20}>20x Speed</option>
+          <option value={100}>100x Speed</option>
+          <option value={200}>200x Speed</option>
+          <option value={500}>500x Speed</option>
         </select>
 
         <span style={{ marginLeft: '12px', fontSize: '0.85rem', color: 'var(--text-secondary)', display: 'flex', alignItems: 'center', gap: '8px' }}>
