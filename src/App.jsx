@@ -1,16 +1,36 @@
 import { useState, useEffect, useRef, useCallback, useMemo } from 'react';
-import { Play, Pause, FastForward, Rewind, Activity, Cpu, Database, TerminalSquare, AlertTriangle } from 'lucide-react';
+import { Play, Pause, FastForward, Rewind, Activity, Cpu, Database, TerminalSquare, AlertTriangle, Download, Settings, PlayCircle, ArrowLeft } from 'lucide-react';
 import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from 'recharts';
 import './index.css';
 
-const API_URL = 'https://suryanshchattree-neural-paged-attention-env.hf.space/api/simulate';
-const MAX_HISTORY = 150; // Rolling buffer size to prevent chart freezing
+const API_BASE = 'https://suryanshchattree-neural-paged-attention-env.hf.space/api';
+const MAX_HISTORY = 150; 
 
 function App() {
-  // Config state
+  const [appMode, setAppMode] = useState('config'); // 'config' | 'playback'
+
+  // Config Form State
   const [selectedAgent, setSelectedAgent] = useState('lru');
   const [selectedTask, setSelectedTask] = useState('hard');
+  const [customTicks, setCustomTicks] = useState('');
   
+  const [gpuBlocks, setGpuBlocks] = useState('');
+  const [cpuBlocks, setCpuBlocks] = useState('');
+  const [tokensPerBlock, setTokensPerBlock] = useState('');
+  const [maxTicksEasy, setMaxTicksEasy] = useState('');
+  const [maxTicksMedium, setMaxTicksMedium] = useState('');
+  const [maxTicksHard, setMaxTicksHard] = useState('');
+
+  const [availableAgents, setAvailableAgents] = useState([
+    { id: 'lru', name: 'Least Recently Used (LRU)' },
+    { id: 'random', name: 'Random Agent' },
+    { id: 'qlearning', name: 'Tabular Q-Learning Agent' },
+    { id: 'neural', name: 'Deep Q-Network (DQN) Agent' }
+  ]);
+
+  const [defaultSettings, setDefaultSettings] = useState(null);
+  const [currentConfig, setCurrentConfig] = useState(null);
+
   // Playback state
   const [simulationTrace, setSimulationTrace] = useState([]);
   const [sessionData, setSessionData] = useState(null);
@@ -19,28 +39,89 @@ function App() {
   const [playbackSpeed, setPlaybackSpeed] = useState(1);
   
   const [isLoading, setIsLoading] = useState(false);
+  const [loadingText, setLoadingText] = useState('');
   const [error, setError] = useState(null);
-  
-  // Keep ref sync with state for the interval
+
+  // Fetch agents and default settings on mount
+  useEffect(() => {
+    const initData = async () => {
+      try {
+        const [agentRes, settingsRes] = await Promise.all([
+          fetch(`${API_BASE}/agents`),
+          fetch(`${API_BASE}/settings`)
+        ]);
+        
+        const agentData = await agentRes.json();
+        if (agentData.status === 'success' && agentData.available_agents) {
+          setAvailableAgents(agentData.available_agents);
+        }
+
+        const settingsData = await settingsRes.json();
+        if (settingsData.status === 'success' && settingsData.default_settings) {
+          setDefaultSettings(settingsData.default_settings);
+        }
+      } catch (err) {
+        console.error('Failed to initialize data:', err);
+      }
+    };
+    initData();
+  }, []);
+
   const playStateRef = useRef({ isPlaying, currentTickIndex, traceLength: simulationTrace.length });
   useEffect(() => {
     playStateRef.current = { isPlaying, currentTickIndex, traceLength: simulationTrace.length };
   }, [isPlaying, currentTickIndex, simulationTrace.length]);
 
-  const fetchSimulation = async () => {
+  const handleStartSimulation = async (e) => {
+    e.preventDefault();
     setIsLoading(true);
-    setIsPlaying(false);
     setError(null);
+    
     try {
-      const response = await fetch(API_URL, {
+      // 1. Send Settings
+      setLoadingText('Applying Environment Settings...');
+      const settingsPayload = {
+        gpu_total_blocks: gpuBlocks ? parseInt(gpuBlocks, 10) : null,
+        cpu_total_blocks: cpuBlocks ? parseInt(cpuBlocks, 10) : null,
+        tokens_per_block: tokensPerBlock ? parseInt(tokensPerBlock, 10) : null,
+        max_ticks_easy: maxTicksEasy ? parseInt(maxTicksEasy, 10) : null,
+        max_ticks_medium: maxTicksMedium ? parseInt(maxTicksMedium, 10) : null,
+        max_ticks_hard: maxTicksHard ? parseInt(maxTicksHard, 10) : null,
+      };
+
+      const settingsRes = await fetch(`${API_BASE}/settings`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ agent: selectedAgent, task: selectedTask })
+        body: JSON.stringify(settingsPayload)
+      });
+      if (!settingsRes.ok) throw new Error('Failed to apply settings');
+
+      // 2. Run Simulation
+      setLoadingText('Running Headless Simulation...');
+      
+      setCurrentConfig({
+        agent: selectedAgent,
+        task: selectedTask,
+        gpu: settingsPayload.gpu_total_blocks || defaultSettings?.GPU_TOTAL_BLOCKS || 'Default',
+        cpu: settingsPayload.cpu_total_blocks || defaultSettings?.CPU_TOTAL_BLOCKS || 'Default',
+        tokens: settingsPayload.tokens_per_block || defaultSettings?.TOKENS_PER_BLOCK || 'Default',
+      });
+
+      const simPayload = {
+        agent: selectedAgent,
+        task: selectedTask,
+        ticks: customTicks ? parseInt(customTicks, 10) : null
+      };
+
+      const simRes = await fetch(`${API_BASE}/simulate`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(simPayload)
       });
       
-      if (!response.ok) throw new Error('Network response was not ok');
-      const data = await response.json();
-      
+      if (!simRes.ok) throw new Error('Simulation failed');
+      const data = await simRes.json();
+
       if (data.session_logs && data.session_logs.length > 0) {
         setSessionData(data.session_logs[0]);
       } else {
@@ -59,9 +140,12 @@ function App() {
       setSimulationTrace(newLogs);
       setCurrentTickIndex(newLogs.length > 0 ? 0 : -1);
       
+      // 3. Transition to Playback Dashboard
+      setAppMode('playback');
+      
     } catch (err) {
-      console.error('Fetch error:', err);
-      setError('Failed to fetch simulation data.');
+      console.error(err);
+      setError(err.message || 'An error occurred during configuration');
     } finally {
       setIsLoading(false);
     }
@@ -102,6 +186,56 @@ function App() {
 
   const currentTick = history.length > 0 ? history[history.length - 1] : null;
 
+  // Color logic for visualizations
+  const getResourceColor = (utilization) => {
+    if (utilization >= 0.85) return 'var(--danger-color)'; // Red
+    if (utilization >= 0.60) return '#f59e0b'; // Amber
+    return 'var(--accent-color)'; // Green
+  };
+
+  const currentScore = currentTick ? (currentTick.score || 0) : 0;
+  const scoreColor = currentScore < 0 ? 'var(--danger-color)' : '#6ee7b7';
+  const scoreBg = currentScore < 0 ? 'rgba(239, 68, 68, 0.2)' : 'rgba(16, 185, 129, 0.2)';
+
+  const currentGpu = currentTick ? (currentTick.gpu_utilization_pct || 0) : 0;
+  const currentCpu = currentTick ? (currentTick.cpu_utilization_pct || 0) : 0;
+
+  const downloadLogs = (format = 'json') => {
+    if (simulationTrace.length === 0) return;
+    
+    let content = '';
+    let mimeType = '';
+    let filename = '';
+
+    if (format === 'json') {
+      const exportData = {
+        agent: selectedAgent,
+        task: selectedTask,
+        session: sessionData,
+        logs: simulationTrace
+      };
+      content = JSON.stringify(exportData, null, 2);
+      mimeType = 'application/json';
+      filename = `simulation_${selectedAgent}_${selectedTask}_logs.json`;
+    } else if (format === 'csv') {
+      const headers = Object.keys(simulationTrace[0]).join(',');
+      const rows = simulationTrace.map(log => Object.values(log).join(',')).join('\n');
+      content = `${headers}\n${rows}`;
+      mimeType = 'text/csv';
+      filename = `simulation_${selectedAgent}_${selectedTask}_logs.csv`;
+    }
+
+    const blob = new Blob([content], { type: mimeType });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = filename;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+  };
+
   // Custom Tooltip for charts
   const CustomTooltip = ({ active, payload, label }) => {
     if (active && payload && payload.length) {
@@ -119,44 +253,111 @@ function App() {
     return null;
   };
 
-  // Color logic for visualizations
-  const getResourceColor = (utilization) => {
-    if (utilization >= 0.85) return 'var(--danger-color)'; // Red
-    if (utilization >= 0.60) return '#f59e0b'; // Amber
-    return 'var(--accent-color)'; // Green
-  };
+  // Render Configuration Wizard
+  if (appMode === 'config') {
+    return (
+      <div className="config-container">
+        <div className="config-panel">
+          <div className="config-header">
+            <h1>Neural PagedAttention</h1>
+            <p>Configure Environment & Start Simulation</p>
+          </div>
+          
+          <form onSubmit={handleStartSimulation}>
+            {/* Global Settings Section */}
+            <div className="config-section">
+              <h2><Settings size={18} /> Global Environment Constants</h2>
+              <p style={{ fontSize: '0.85rem', color: 'var(--text-secondary)', marginBottom: '16px' }}>Leave fields blank to use default values.</p>
+              <div className="config-grid">
+                <div className="form-group">
+                  <label>GPU Total Blocks</label>
+                  <input type="number" className="form-control" placeholder={defaultSettings?.GPU_TOTAL_BLOCKS || "Default"} value={gpuBlocks} onChange={e => setGpuBlocks(e.target.value)} />
+                </div>
+                <div className="form-group">
+                  <label>CPU Total Blocks</label>
+                  <input type="number" className="form-control" placeholder={defaultSettings?.CPU_TOTAL_BLOCKS || "Default"} value={cpuBlocks} onChange={e => setCpuBlocks(e.target.value)} />
+                </div>
+                <div className="form-group">
+                  <label>Tokens Per Block</label>
+                  <input type="number" className="form-control" placeholder={defaultSettings?.TOKENS_PER_BLOCK || "Default"} value={tokensPerBlock} onChange={e => setTokensPerBlock(e.target.value)} />
+                </div>
+              </div>
+            </div>
 
-  const currentScore = currentTick ? (currentTick.score || 0) : 0;
-  const scoreColor = currentScore < 0 ? 'var(--danger-color)' : '#6ee7b7';
-  const scoreBg = currentScore < 0 ? 'rgba(239, 68, 68, 0.2)' : 'rgba(16, 185, 129, 0.2)';
+            {/* Task Limits Section */}
+            <div className="config-section">
+              <h2><Activity size={18} /> Maximum Ticks by Task Difficulty</h2>
+              <div className="config-grid">
+                <div className="form-group">
+                  <label>Max Ticks (Easy)</label>
+                  <input type="number" className="form-control" placeholder={defaultSettings?.max_ticks_easy || "Default"} value={maxTicksEasy} onChange={e => setMaxTicksEasy(e.target.value)} />
+                </div>
+                <div className="form-group">
+                  <label>Max Ticks (Medium)</label>
+                  <input type="number" className="form-control" placeholder={defaultSettings?.max_ticks_medium || "Default"} value={maxTicksMedium} onChange={e => setMaxTicksMedium(e.target.value)} />
+                </div>
+                <div className="form-group">
+                  <label>Max Ticks (Hard)</label>
+                  <input type="number" className="form-control" placeholder={defaultSettings?.max_ticks_hard || "Default"} value={maxTicksHard} onChange={e => setMaxTicksHard(e.target.value)} />
+                </div>
+              </div>
+            </div>
 
-  const currentGpu = currentTick ? (currentTick.gpu_utilization_pct || 0) : 0;
-  const currentCpu = currentTick ? (currentTick.cpu_utilization_pct || 0) : 0;
+            {/* Simulation Parameters Section */}
+            <div className="config-section">
+              <h2><PlayCircle size={18} /> Simulation Parameters</h2>
+              <div className="config-grid">
+                <div className="form-group">
+                  <label>Agent Policy</label>
+                  <select className="form-control" value={selectedAgent} onChange={(e) => setSelectedAgent(e.target.value)} required>
+                    {availableAgents.map(agent => (
+                      <option key={agent.id} value={agent.id}>{agent.name}</option>
+                    ))}
+                  </select>
+                </div>
+                <div className="form-group">
+                  <label>Task Difficulty</label>
+                  <select className="form-control" value={selectedTask} onChange={(e) => setSelectedTask(e.target.value)} required>
+                    <option value="easy">Easy</option>
+                    <option value="medium">Medium</option>
+                    <option value="hard">Hard</option>
+                  </select>
+                </div>
+                <div className="form-group" style={{ gridColumn: 'span 2' }}>
+                  <label>Specific Ticks for this Run (Optional)</label>
+                  <input type="number" className="form-control" placeholder="Override default ticks for this specific session" value={customTicks} onChange={e => setCustomTicks(e.target.value)} />
+                </div>
+              </div>
+            </div>
 
+            {error && <div style={{ background: 'rgba(239,68,68,0.2)', border: '1px solid #ef4444', padding: '12px', borderRadius: '8px', color: '#fca5a5', marginBottom: '20px' }}>{error}</div>}
+
+            <button type="submit" className="btn-large" disabled={isLoading}>
+              {isLoading ? (
+                <>
+                  <Activity className="spinner" size={20} /> 
+                  {loadingText}
+                </>
+              ) : (
+                <>
+                  <PlayCircle size={20} /> START SIMULATION
+                </>
+              )}
+            </button>
+          </form>
+        </div>
+      </div>
+    );
+  }
+
+  // Render Playback Dashboard
   return (
     <div className="dashboard-container">
       
       {/* Controls Panel */}
       <div className="controls">
-        <select className="btn" value={selectedAgent} onChange={(e) => setSelectedAgent(e.target.value)}>
-          <option value="lru">LRU Agent</option>
-          <option value="random">Random Agent</option>
-          <option value="fifo">FIFO Agent</option>
-        </select>
-        
-        <select className="btn" value={selectedTask} onChange={(e) => setSelectedTask(e.target.value)}>
-          <option value="easy">Easy Task</option>
-          <option value="medium">Medium Task</option>
-          <option value="hard">Hard Task</option>
-        </select>
-        
-        <button 
-          className="btn" 
-          onClick={fetchSimulation}
-          disabled={isLoading}
-          style={{ background: 'var(--accent-blue)', borderColor: 'var(--accent-blue)' }}
-        >
-          {isLoading ? 'FETCHING...' : 'RUN SIMULATION'}
+        <button className="btn" onClick={() => { setIsPlaying(false); setAppMode('config'); }}>
+          <ArrowLeft size={16} /> NEW SIMULATION
         </button>
 
         <div style={{ width: '1px', height: '24px', background: 'rgba(255,255,255,0.1)', margin: '0 8px' }}></div>
@@ -194,13 +395,38 @@ function App() {
           <option value={3}>3x Speed</option>
           <option value={5}>5x Speed</option>
         </select>
-        
-        <span style={{ marginLeft: '12px', fontSize: '0.85rem', color: 'var(--text-secondary)' }}>
-          {simulationTrace.length > 0 ? `Tick: ${currentTickIndex + 1} / ${simulationTrace.length}` : ''}
-        </span>
 
-        {error && <span style={{ color: 'var(--danger-color)', fontSize: '0.8rem', marginLeft: '12px' }}>{error}</span>}
+        <span style={{ marginLeft: '12px', fontSize: '0.85rem', color: 'var(--text-secondary)', display: 'flex', alignItems: 'center', gap: '8px' }}>
+          Tick: 
+          <input 
+            type="number" 
+            className="btn"
+            style={{ width: '60px', padding: '4px', textAlign: 'center', margin: 0, height: 'auto' }}
+            min={1} 
+            max={simulationTrace.length} 
+            value={simulationTrace.length > 0 ? currentTickIndex + 1 : 0} 
+            disabled={simulationTrace.length === 0}
+            onChange={(e) => {
+              let val = parseInt(e.target.value, 10);
+              if (isNaN(val)) return;
+              if (val < 1) val = 1;
+              if (val > simulationTrace.length) val = simulationTrace.length;
+              setCurrentTickIndex(val - 1);
+            }}
+          /> 
+          / {simulationTrace.length}
+        </span>
       </div>
+
+      {currentConfig && (
+        <div style={{ gridColumn: 'span 12', display: 'flex', gap: '20px', padding: '12px 20px', background: 'var(--panel-bg)', borderRadius: '8px', border: '1px solid var(--panel-border)', fontSize: '0.85rem' }}>
+          <div style={{ color: 'var(--text-secondary)' }}><strong>Agent:</strong> <span style={{ color: '#fff' }}>{currentConfig.agent.toUpperCase()}</span></div>
+          <div style={{ color: 'var(--text-secondary)' }}><strong>Task:</strong> <span style={{ color: '#fff' }}>{currentConfig.task.toUpperCase()}</span></div>
+          <div style={{ color: 'var(--text-secondary)' }}><strong>GPU Blocks:</strong> <span style={{ color: '#fff' }}>{currentConfig.gpu}</span></div>
+          <div style={{ color: 'var(--text-secondary)' }}><strong>CPU Blocks:</strong> <span style={{ color: '#fff' }}>{currentConfig.cpu}</span></div>
+          <div style={{ color: 'var(--text-secondary)' }}><strong>Tokens/Block:</strong> <span style={{ color: '#fff' }}>{currentConfig.tokens}</span></div>
+        </div>
+      )}
 
       {/* Top Row: Pools */}
       <div className="panel grid-col-4">
@@ -377,7 +603,7 @@ function App() {
         <div className="panel-header">
           <div className="panel-title">
             <div className="icon-wrapper purple"><Activity size={16} /></div>
-            TRAFFIC GENERATION (QUEUE PRESSURE)
+            TRAFFIC GENERATION (QUEUE SIZE)
           </div>
         </div>
         <div style={{ width: '100%', height: '350px' }}>
@@ -387,8 +613,8 @@ function App() {
               <XAxis dataKey="tick" stroke="#9ca3af" fontSize={12} tickLine={false} axisLine={false} />
               <YAxis stroke="#9ca3af" fontSize={12} tickLine={false} axisLine={false} />
               <Tooltip content={<CustomTooltip />} />
-              <Line type="monotone" dataKey="vip_queue_pressure" name="VIP Pressure" stroke="#8b5cf6" strokeWidth={2} dot={false} isAnimationActive={false} />
-              <Line type="monotone" dataKey="free_queue_pressure" name="Free Pressure" stroke="#3b82f6" strokeWidth={2} dot={false} isAnimationActive={false} />
+              <Line type="monotone" dataKey="total_vip_req" name="VIP Requests" stroke="#8b5cf6" strokeWidth={2} dot={false} isAnimationActive={false} />
+              <Line type="monotone" dataKey="total_free_req" name="Free Requests" stroke="#3b82f6" strokeWidth={2} dot={false} isAnimationActive={false} />
             </LineChart>
           </ResponsiveContainer>
         </div>
@@ -399,6 +625,10 @@ function App() {
           <div className="panel-title">
             <div className="icon-wrapper"><TerminalSquare size={16} /></div>
             EVENT LOG
+          </div>
+          <div style={{ display: 'flex', gap: '8px' }}>
+            <button className="btn" style={{ padding: '4px 8px', fontSize: '0.7rem' }} onClick={() => downloadLogs('json')} disabled={simulationTrace.length === 0}>JSON</button>
+            <button className="btn" style={{ padding: '4px 8px', fontSize: '0.7rem' }} onClick={() => downloadLogs('csv')} disabled={simulationTrace.length === 0}>CSV</button>
           </div>
         </div>
         <div className="log-container" style={{ maxHeight: '350px' }}>
